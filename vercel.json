@@ -15,6 +15,14 @@
       "dest": "/api/$1"
     },
     {
+      "src": "/src/(.*)",
+      "status": 404
+    },
+    {
+      "src": "/(.*)\\.js",
+      "dest": "/$1.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "/index.html"
     }
