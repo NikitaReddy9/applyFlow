@@ -959,12 +959,39 @@ function EmailModal({ application, onClose, onEmailSent, userEmail }) {
   const [emailBody, setEmailBody] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const [isFindingContacts, setIsFindingContacts] = useState(false)
   const [error, setError] = useState('')
 
   // Auto-generate email on modal open
   useEffect(() => {
     handleGenerateEmail()
   }, [])
+
+  async function handleFindContacts() {
+    setIsFindingContacts(true)
+    setError('')
+    console.log('[EMAIL MODAL] Attempting to find contacts for:', application.role, 'at', application.company)
+    try {
+      const result = await findContacts({
+        title: application.role,
+        company: application.company,
+        location: application.location
+      })
+      console.log('[EMAIL MODAL] Contacts found:', result)
+      if (result.contacts && result.contacts.length > 0) {
+        const firstContact = result.contacts[0]
+        setEmailTo(firstContact.email || '')
+        setError('')
+      } else {
+        setError('No contacts found. Please enter a recipient manually.')
+      }
+    } catch (err) {
+      console.error('[EMAIL MODAL] Error finding contacts:', err)
+      setError(`Failed to find contacts: ${err.message}`)
+    } finally {
+      setIsFindingContacts(false)
+    }
+  }
 
   async function handleGenerateEmail() {
     setIsGenerating(true)
@@ -1036,13 +1063,24 @@ function EmailModal({ application, onClose, onEmailSent, userEmail }) {
 
           <div className="email-field-row">
             <label>To</label>
-            <input
-              type="email"
-              value={emailTo}
-              onChange={(e) => setEmailTo(e.target.value)}
-              placeholder="recruiter@company.com"
-              className="email-field-input"
-            />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="email"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                placeholder="recruiter@company.com"
+                className="email-field-input"
+                style={{ flex: 1 }}
+              />
+              <button 
+                onClick={handleFindContacts} 
+                disabled={isFindingContacts}
+                className="btn-secondary"
+                title="Use AI to find recruiter contacts"
+              >
+                {isFindingContacts ? 'Finding...' : '🔍 Find'}
+              </button>
+            </div>
           </div>
 
           <div className="email-field-row">

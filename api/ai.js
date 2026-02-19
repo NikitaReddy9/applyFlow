@@ -160,15 +160,21 @@ export default async function handler(request, response) {
 
 // Find recruiter contacts for a specific job
 async function handleFindContacts(job, response) {
+  console.log('[FIND CONTACTS] Request received with job:', JSON.stringify(job, null, 2))
+  
   if (!job) {
+    console.log('[FIND CONTACTS] ERROR: No job data provided')
     return response.status(400).json({ message: 'Job data is required' })
   }
 
-  const prompt = AI_PROMPTS.findContacts(
-    job.title || 'Unknown Role',
-    job.company || 'Unknown Company',
-    job.location || ''
-  )
+  const jobTitle = job.title || 'Unknown Role'
+  const jobCompany = job.company || 'Unknown Company'
+  const jobLocation = job.location || ''
+  
+  console.log(`[FIND CONTACTS] Building prompt for: ${jobTitle} at ${jobCompany} (${jobLocation})`)
+
+  const prompt = AI_PROMPTS.findContacts(jobTitle, jobCompany, jobLocation)
+  console.log('[FIND CONTACTS] Prompt built, calling OpenAI...')
 
   const aiResponse = await openaiClient.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -178,7 +184,10 @@ async function handleFindContacts(job, response) {
   })
 
   const responseText = aiResponse.choices[0].message.content || '{}'
+  console.log('[FIND CONTACTS] OpenAI response:', responseText)
+  
   const parsedData = safeJsonParse(responseText, { contacts: [] })
+  console.log('[FIND CONTACTS] Parsed contacts:', JSON.stringify(parsedData, null, 2))
 
   return response.status(200).json(parsedData)
 }

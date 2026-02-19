@@ -59,10 +59,18 @@ export async function getSavedJobs(userId) {
 
 // Use AI to find recruiter/manager contacts for a job
 export async function findContacts(job) {
-  return apiCall('/ai', {
-    method: 'POST',
-    body: JSON.stringify({ action: 'find_contacts', job })
-  })
+  console.log('[FRONTEND] Finding contacts for job:', JSON.stringify(job, null, 2))
+  try {
+    const result = await apiCall('/ai', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'find_contacts', job })
+    })
+    console.log('[FRONTEND] Found contacts response:', JSON.stringify(result, null, 2))
+    return result
+  } catch (error) {
+    console.error('[FRONTEND] Error finding contacts:', error.message)
+    throw error
+  }
 }
 
 // Use AI to generate a personalized outreach email
