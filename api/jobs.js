@@ -104,7 +104,8 @@ export default async function handler(request, response) {
 
 // ─── JOB DISCOVERY ────────────────────────────────────────────────────────────
 
-// Build Indeed search URLs from preferences and fetch job listings
+// Fetch jobs from JSearch API (RapidAPI)
+// JSearch aggregates jobs from Indeed, LinkedIn, and other job boards
 async function discoverJobsFromIndeed(preferences) {
   const allJobs = []
 
@@ -116,10 +117,10 @@ async function discoverJobsFromIndeed(preferences) {
 
   for (const role of rolesToSearch) {
     try {
-      const jobs = await scrapeIndeedJobs(role, preferences.location, preferences.keywords)
+      const jobs = await searchJobsWithJSearch(role, preferences.location, preferences.keywords)
       allJobs.push(...jobs)
     } catch (error) {
-      console.error(`Error scraping for role "${role}":`, error)
+      console.error(`Error searching for role "${role}":`, error)
     }
   }
 
@@ -131,170 +132,57 @@ async function discoverJobsFromIndeed(preferences) {
   return uniqueJobs
 }
 
-// Scrape Indeed for jobs matching a specific role and location
-async function scrapeIndeedJobs(role, location, keywords) {
-  // Build the Indeed search URL
+// Search for jobs using JSearch API from RapidAPI
+async function searchJobsWithJSearch(role, location, keywords) {
+  const rapidApiKey = process.env.JSEARCH_API_KEY
+  const rapidApiHost = 'jsearch.p.rapidapi.com'
+
+  if (!rapidApiKey) {
+    throw new Error('JSEARCH_API_KEY environment variable is not set')
+  }
+
+  // Build the search query
   const searchQuery = keywords ? `${role} ${keywords}` : role
-  const encodedQuery = encodeURIComponent(searchQuery)
-  const encodedLocation = encodeURIComponent(location || '')
 
-  const indeedUrl = `https://www.indeed.com/jobs?q=${encodedQuery}&l=${encodedLocation}&fromage=14&sort=date`
+  // Build search parameters
+  const params = new URLSearchParams({
+    query: searchQuery,
+    page: '1',
+    num_pages: '1'
+  })
 
-  const pageResponse = await fetch(indeedUrl, {
+  if (location) {
+    params.append('location', location)
+  }
+
+  const url = `https://${rapidApiHost}/search?${params.toString()}`
+
+  const response = await fetch(url, {
+    method: 'GET',
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
+      'x-rapidapi-key': rapidApiKey,
+      'x-rapidapi-host': rapidApiHost
     }
   })
 
-  if (!pageResponse.ok) {
-    throw new Error(`Indeed returned status ${pageResponse.status}`)
+  if (!response.ok) {
+    throw new Error(`JSearch API returned status ${response.status}`)
   }
 
-  const htmlContent = await pageResponse.text()
-  const parsedJobs = parseIndeedHTML(htmlContent)
+  const data = await response.json()
 
-  return parsedJobs
-}
-
-// Parse the HTML from Indeed to extract job listings
-function parseIndeedHTML(htmlContent) {
-  const jobs = []
-
-  // Extract job cards from Indeed's HTML structure
-  // Indeed uses <div class="job_seen_beacon"> for each job card
-  const jobCardPattern = /<div[^>]*class="[^"]*job_seen_beacon[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*job_seen_beacon[^"]*"|$)/gi
-  const jobCardMatches = htmlContent.match(jobCardPattern) || []
-
-  for (const jobCard of jobCardMatches.slice(0, 20)) {
-    try {
-      const parsedJob = extractJobDataFromCard(jobCard)
-      if (parsedJob && parsedJob.title && parsedJob.company) {
-        jobs.push(parsedJob)
-      }
-    } catch (error) {
-      // Skip malformed job cards
-      continue
-    }
-  }
-
-  // If the regex approach didn't find jobs, try alternative parsing
-  if (jobs.length === 0) {
-    return parseIndeedAlternative(htmlContent)
-  }
+  // Transform JSearch API response to our job format
+  const jobs = (data.data || []).map(job => ({
+    title: job.job_title || '',
+    company: job.employer_name || '',
+    location: job.job_location || '',
+    link: job.job_apply_link || job.job_apply_url || '',
+    descriptionSnippet: job.job_description ? job.job_description.substring(0, 300) : '',
+    postedDate: job.job_posted_at_datetime_utc ? new Date(job.job_posted_at_datetime_utc).toISOString() : new Date().toISOString(),
+    source: 'JSearch (Indeed, LinkedIn, etc)'
+  })).filter(job => job.title && job.company && job.link)
 
   return jobs
-}
-
-// Extract specific fields from a single job card's HTML
-function extractJobDataFromCard(cardHtml) {
-  // Extract job title
-  const titleMatch = cardHtml.match(/class="jobTitle[^"]*"[^>]*>[\s\S]*?<span[^>]*>(.*?)<\/span>/i)
-  const title = cleanText(titleMatch?.[1] || '')
-
-  // Extract company name
-  const companyMatch = cardHtml.match(/class="companyName"[^>]*>([\s\S]*?)<\/[a-z]+>/i)
-  const company = cleanText(companyMatch?.[1] || '')
-
-  // Extract location
-  const locationMatch = cardHtml.match(/class="companyLocation"[^>]*>([\s\S]*?)<\/div>/i)
-  const location = cleanText(locationMatch?.[1] || '')
-
-  // Extract job link
-  const linkMatch = cardHtml.match(/href="(\/rc\/clk[^"]+)"/i)
-  const relativeLink = linkMatch?.[1] || ''
-  const link = relativeLink ? `https://www.indeed.com${relativeLink}` : ''
-
-  // Extract description snippet
-  const snippetMatch = cardHtml.match(/class="[^"]*job-snippet[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
-  const descriptionSnippet = cleanText(snippetMatch?.[1] || '')
-
-  // Extract posted date
-  const dateMatch = cardHtml.match(/class="date[^"]*"[^>]*>([\s\S]*?)<\/span>/i)
-  const postedDateText = cleanText(dateMatch?.[1] || '')
-  const postedDate = parseRelativeDate(postedDateText)
-
-  return {
-    title,
-    company,
-    location,
-    link,
-    descriptionSnippet,
-    postedDate,
-    source: 'Indeed'
-  }
-}
-
-// Alternative HTML parsing if the main approach fails
-function parseIndeedAlternative(htmlContent) {
-  const jobs = []
-
-  // Try to find JSON data embedded in the page (Indeed sometimes includes this)
-  const jsonPattern = /window\.mosaic\.providerData\["mosaic-provider-jobcards"\]\s*=\s*(\{[\s\S]*?\});/
-  const jsonMatch = htmlContent.match(jsonPattern)
-
-  if (jsonMatch) {
-    try {
-      const jsonData = JSON.parse(jsonMatch[1])
-      const jobResults = jsonData?.metaData?.mosaicProviderJobCardsModel?.results || []
-
-      for (const result of jobResults.slice(0, 20)) {
-        jobs.push({
-          title: result.displayTitle || result.title || '',
-          company: result.company || '',
-          location: result.formattedLocation || result.location || '',
-          link: result.thirdPartyApplyUrl || `https://www.indeed.com/viewjob?jk=${result.jobkey}`,
-          descriptionSnippet: result.snippet || result.displaySnippet || '',
-          postedDate: result.pubDate ? new Date(result.pubDate).toISOString() : new Date().toISOString(),
-          source: 'Indeed'
-        })
-      }
-    } catch (parseError) {
-      console.error('Could not parse embedded JSON:', parseError)
-    }
-  }
-
-  return jobs
-}
-
-// Clean HTML tags and extra whitespace from text
-function cleanText(rawText) {
-  return rawText
-    .replace(/<[^>]+>/g, '')      // Remove HTML tags
-    .replace(/&amp;/g, '&')       // Decode HTML entities
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')         // Collapse whitespace
-    .trim()
-}
-
-// Convert "Posted X days ago" text to an ISO date string
-function parseRelativeDate(dateText) {
-  const today = new Date()
-  const lowerText = dateText.toLowerCase()
-
-  if (lowerText.includes('today') || lowerText.includes('just posted') || lowerText.includes('active')) {
-    return today.toISOString()
-  }
-
-  const daysMatch = lowerText.match(/(\d+)\s*day/)
-  if (daysMatch) {
-    const daysAgo = parseInt(daysMatch[1])
-    today.setDate(today.getDate() - daysAgo)
-    return today.toISOString()
-  }
-
-  const hoursMatch = lowerText.match(/(\d+)\s*hour/)
-  if (hoursMatch) {
-    today.setHours(today.getHours() - parseInt(hoursMatch[1]))
-    return today.toISOString()
-  }
-
-  return new Date().toISOString()
 }
 
 // ─── MATCH SCORING ────────────────────────────────────────────────────────────
