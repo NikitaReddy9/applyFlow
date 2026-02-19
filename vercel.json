@@ -19,8 +19,8 @@
       "status": 404
     },
     {
-      "src": "/(.*)\\.js",
-      "dest": "/$1.js"
+      "src": "/(.*?)\\.(js|css|svg|png|jpg|png|ico|woff|woff2)$",
+      "dest": "/$1.$2"
     },
     {
       "src": "/(.*)",
